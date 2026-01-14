@@ -1,4 +1,4 @@
-name: Slack Lists - Build maps v2 (time + gender by frequency)
+name: Slack Lists - Find private checkbox column
 
 on:
   workflow_dispatch:
@@ -13,10 +13,10 @@ on:
         default: "200"
 
 jobs:
-  build:
+  find:
     runs-on: ubuntu-latest
     steps:
-      - name: Build maps
+      - name: Scan checkbox columns and counts
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           LIST_ID: ${{ inputs.list_id }}
@@ -25,24 +25,12 @@ jobs:
           set -euo pipefail
           python3 - << 'PY'
           import os, json, urllib.request
-          from collections import Counter
+          from collections import defaultdict
 
           token = os.environ["SLACK_BOT_TOKEN"]
           list_id = os.environ["LIST_ID"]
           limit = int(os.environ.get("LIMIT","200"))
           limit = max(1, min(200, limit))
-
-          # 확정된 컬럼
-          GENDER_COL = "Col0A8FH3BN7L"
-          TIME_COL   = "Col0A8K6V4HDJ"
-
-          # time label을 name에서 찾는 방식(이미 당신이 TIME_TEST로 넣었으니 유지)
-          TIME_LABEL_TO_CODE = {
-              "자": "0", "축": "1", "인": "2", "묘": "3",
-              "진": "4", "사": "5", "오": "6", "미": "7",
-              "신": "8", "유": "9", "술": "10", "해": "11",
-              "모름": "12",
-          }
 
           def post(method: str, payload: dict):
               url = f"https://slack.com/api/{method}"
@@ -53,92 +41,41 @@ jobs:
               with urllib.request.urlopen(req, timeout=30) as resp:
                   return json.loads(resp.read().decode("utf-8"))
 
-          def get_name(item):
-              for f in item.get("fields", []):
-                  if f.get("key") == "name":
-                      return (f.get("text") or "").strip()
-              return ""
-
-          def get_select_opt(item, column_id):
-              for f in item.get("fields", []):
-                  if f.get("column_id") == column_id:
-                      sel = f.get("select") or []
-                      return sel[0] if sel else ""
-              return ""
-
           res = post("slackLists.items.list", {"list_id": list_id, "limit": limit})
           if not res.get("ok"):
               raise RuntimeError(res)
 
           items = res.get("items", [])
+          counts = defaultdict(lambda: {"true": 0, "false": 0, "null": 0})
 
-          # 1) TIME_OPT_TO_CODE: TIME_TEST 아이템 이름에서 자/축/.../모름을 찾아 매핑
-          time_map = {}
           for it in items:
-              name = get_name(it)
-              if not name.startswith("TIME_TEST_"):
+              for f in it.get("fields", []):
+                  # checkbox 형태인 필드만 잡기
+                  if "checkbox" in f:
+                      col = f.get("column_id") or f.get("key") or "UNKNOWN"
+                      # todo_completed(Col00)는 제외 후보로만 표시
+                      val = f.get("checkbox")
+                      if val is True:
+                          counts[col]["true"] += 1
+                      elif val is False:
+                          counts[col]["false"] += 1
+                      else:
+                          counts[col]["null"] += 1
+
+          print("items_scanned =", len(items))
+          print("=== checkbox column counts (column_id -> true/false) ===")
+          print(json.dumps(counts, ensure_ascii=False, indent=2))
+
+          # 후보 추천: Col00 제외 + true가 존재하는 checkbox 컬럼
+          candidates = []
+          for col, c in counts.items():
+              if col == "Col00":
                   continue
+              if c["true"] > 0:
+                  candidates.append((col, c["true"], c["false"], c["null"]))
+          candidates.sort(key=lambda x: (-x[1], x[0]))
 
-              label = None
-              for k in TIME_LABEL_TO_CODE:
-                  if k in name:
-                      label = k
-                      break
-              if not label:
-                  continue
-
-              opt = get_select_opt(it, TIME_COL)
-              if opt:
-                  time_map[opt] = TIME_LABEL_TO_CODE[label]
-
-          # 2) GENDER_OPT_TO_MF: 전체 아이템에서 성별 옵션ID 빈도 기반 추론
-          gender_counter = Counter()
-          for it in items:
-              opt = get_select_opt(it, GENDER_COL)
-              if opt:
-                  gender_counter[opt] += 1
-
-          gender_map = {}
-          # 기대: 옵션이 정확히 2개, 여성은 1회 등장
-          if len(gender_counter) >= 2:
-              # count=1인 opt를 여성으로 우선 배정
-              singles = [opt for opt, cnt in gender_counter.items() if cnt == 1]
-              if len(singles) == 1:
-                  female_opt = singles[0]
-                  gender_map[female_opt] = "f"
-                  # 나머지 중 최빈을 남성
-                  male_opt = max((o for o in gender_counter if o != female_opt),
-                                 key=lambda o: gender_counter[o])
-                  gender_map[male_opt] = "m"
-              else:
-                  # 일반 케이스: 단일 빈도 규칙이 깨졌을 때는 최빈=남성, 나머지=여성(가정)
-                  male_opt = max(gender_counter, key=lambda o: gender_counter[o])
-                  gender_map[male_opt] = "m"
-                  for o in gender_counter:
-                      if o != male_opt:
-                          gender_map[o] = "f"
-
-          out = {
-              "GENDER_OPT_TO_MF": gender_map,
-              "TIME_OPT_TO_CODE": time_map,
-              "diagnostics": {
-                  "gender_counts": dict(gender_counter),
-                  "items_scanned": len(items),
-                  "gender_col": GENDER_COL,
-                  "time_col": TIME_COL,
-                  "time_code_definition": "0=자 ... 11=해, 12=모름"
-              }
-          }
-          print(json.dumps(out, ensure_ascii=False, indent=2))
-
-          # 진단: time map이 13개인지 체크
-          missing_time = sorted(set(TIME_LABEL_TO_CODE.values()) - set(time_map.values()), key=int)
-          if missing_time:
-              print("\\n=== WARNING: missing time codes ===")
-              print(missing_time)
-
-          # 진단: gender map이 2개인지 체크
-          if len(gender_map) < 2:
-              print("\\n=== WARNING: gender map not fully inferred ===")
-              print("Need at least 2 distinct gender option IDs observed.")
+          print("\n=== candidates (excluding Col00, true>0) ===")
+          for col, t, f, n in candidates:
+              print(f"- {col}: true={t} false={f} null={n}")
           PY
