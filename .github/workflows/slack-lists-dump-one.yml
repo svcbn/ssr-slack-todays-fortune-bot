@@ -1,4 +1,4 @@
-name: Slack Lists - Dump schema + sample items
+name: Slack Lists - Infer select option IDs (debug)
 
 on:
   workflow_dispatch:
@@ -7,15 +7,15 @@ on:
         description: "List ID (e.g., F0A8F387LCS)"
         required: true
       limit:
-        description: "Items to fetch"
+        description: "How many items to scan (1-50)"
         required: false
-        default: "5"
+        default: "30"
 
 jobs:
-  dump:
+  infer:
     runs-on: ubuntu-latest
     steps:
-      - name: Dump list columns (probe) + items
+      - name: Scan items and summarize select/user/date fields
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           LIST_ID: ${{ inputs.list_id }}
@@ -23,11 +23,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 - << 'PY'
-          import os, json, urllib.request
+          import os, json, urllib.request, collections
 
           token = os.environ["SLACK_BOT_TOKEN"]
           list_id = os.environ["LIST_ID"]
-          limit = int(os.environ.get("LIMIT","5"))
+          limit = int(os.environ.get("LIMIT","30"))
+          limit = max(1, min(50, limit))
 
           def post(method: str, payload: dict):
               url = f"https://slack.com/api/{method}"
@@ -38,42 +39,46 @@ jobs:
               with urllib.request.urlopen(req, timeout=30) as resp:
                   return json.loads(resp.read().decode("utf-8"))
 
-          # 1) columns/list schema probing (메서드명이 환경마다 다를 수 있어 후보를 돌려봄)
-          schema_methods = [
-              "slackLists.columns.list",
-              "slackLists.listColumns.list",
-              "slackLists.column.list",
-              "slackLists.columns.get",
-              "slackLists.getColumns",
-          ]
+          res = post("slackLists.items.list", {"list_id": list_id, "limit": limit})
+          if not res.get("ok"):
+              raise RuntimeError(res)
 
-          print("=== auth.test ===")
-          print(json.dumps(post("auth.test", {}), ensure_ascii=False, indent=2))
+          items = res.get("items", [])
+          print(f"items_scanned={len(items)}")
           print()
 
-          schema = None
-          chosen = None
-          for m in schema_methods:
-              res = post(m, {"list_id": list_id})
-              if res.get("ok"):
-                  schema = res
-                  chosen = m
-                  break
-              # unknown_method면 다음 후보로
-              if res.get("error") not in ("unknown_method", "method_not_found"):
-                  # 다른 에러(권한 등)면 기록하고 다음
-                  print(f"[schema probe] {m} -> {res.get('error')}")
-          if chosen:
-              print(f"=== LIST SCHEMA via {chosen} ===")
-              print(json.dumps(schema, ensure_ascii=False, indent=2)[:8000])
-          else:
-              print("=== LIST SCHEMA ===")
-              print("No supported schema method found from candidates.")
-              print("If you know the exact method name in your docs, tell me; we'll use it.")
+          # column_id -> info
+          select_opts = collections.defaultdict(set)
+          user_cols = collections.defaultdict(int)
+          date_cols = collections.defaultdict(int)
+          text_cols = collections.defaultdict(int)
+
+          for it in items:
+              for f in it.get("fields", []):
+                  col = f.get("column_id") or f.get("key")
+                  if "select" in f and isinstance(f.get("select"), list):
+                      for opt in f["select"]:
+                          select_opts[col].add(opt)
+                  if "user" in f and isinstance(f.get("user"), list) and f["user"]:
+                      user_cols[col] += 1
+                  if "date" in f and isinstance(f.get("date"), list) and f["date"]:
+                      date_cols[col] += 1
+                  if f.get("key") == "name" or "rich_text" in f:
+                      text_cols[col] += 1
+
+          print("=== SELECT COLUMNS (column_id -> option_ids) ===")
+          out = {k: sorted(list(v)) for k, v in select_opts.items()}
+          print(json.dumps(out, ensure_ascii=False, indent=2))
           print()
 
-          # 2) items list
-          print("=== slackLists.items.list ===")
-          items = post("slackLists.items.list", {"list_id": list_id, "limit": min(10, max(1, limit))})
-          print(json.dumps(items, ensure_ascii=False, indent=2)[:8000])
+          print("=== USER COLUMNS (column_id -> nonempty_count) ===")
+          print(json.dumps(user_cols, ensure_ascii=False, indent=2))
+          print()
+
+          print("=== DATE COLUMNS (column_id -> nonempty_count) ===")
+          print(json.dumps(date_cols, ensure_ascii=False, indent=2))
+          print()
+
+          print("=== TEXT-ish COLUMNS (column_id -> count) ===")
+          print(json.dumps(text_cols, ensure_ascii=False, indent=2))
           PY
