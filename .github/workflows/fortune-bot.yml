@@ -1,0 +1,251 @@
+name: Fortune Bot (Naver)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 매일 09:00 KST = 00:00 UTC
+    - cron: "0 0 * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install playwright==1.49.0
+          python -m playwright install --with-deps chromium
+
+      - name: Run fortune bot
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          SLACK_LIST_ID: "F0A8F387LCS"
+        run: |
+          set -euo pipefail
+          python - << 'PY'
+          import os, json, time, urllib.request
+          from typing import Any, Dict, List, Optional
+          from playwright.sync_api import sync_playwright
+
+          SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
+          SLACK_CHANNEL_ID = os.environ["SLACK_CHANNEL_ID"]
+          LIST_ID = os.environ.get("SLACK_LIST_ID", "F0A8F387LCS")
+
+          NAME_KEY    = "name"
+          BDAY_COL    = "Col0A8JMV8N5A"
+          GENDER_COL  = "Col0A8FH3BN7L"
+          TIME_COL    = "Col0A8K6V4HDJ"
+          USER_COL    = "Col0A8G4DUAMQ"
+          PRIVATE_COL = "Col0A8BMFER7F"  # 확정
+
+          GENDER_OPT_TO_MF = {
+            "Opt0UQXFE0P": "f",
+            "OptQIPU5CQN": "m"
+          }
+
+          TIME_OPT_TO_CODE = {
+            "OptUZH3DWEL": "12",
+            "OptFOHK1YTJ": "11",
+            "OptCP7RGTD8": "10",
+            "Opt8862IDXI": "9",
+            "OptTMERF71G": "8",
+            "OptCZI2JJS4": "7",
+            "Opt605DLXQ7": "6",
+            "Opt1Z92W5ML": "5",
+            "Opt76B43XGY": "4",
+            "OptV3N31RHW": "3",
+            "OptLKAW5WA1": "2",
+            "OptA92NTRBY": "1",
+            "OptTK8JIX80": "0"
+          }
+
+          def slack_post(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+              url = f"https://slack.com/api/{method}"
+              data = json.dumps(payload).encode("utf-8")
+              req = urllib.request.Request(url, data=data, method="POST")
+              req.add_header("Authorization", f"Bearer {SLACK_BOT_TOKEN}")
+              req.add_header("Content-Type", "application/json; charset=utf-8")
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return json.loads(resp.read().decode("utf-8"))
+
+          def get_field(item: Dict[str, Any], *, key: Optional[str]=None, column_id: Optional[str]=None) -> Optional[Dict[str, Any]]:
+              for f in item.get("fields", []):
+                  if key is not None and f.get("key") == key:
+                      return f
+                  if column_id is not None and f.get("column_id") == column_id:
+                      return f
+              return None
+
+          def extract_record(item: Dict[str, Any]) -> Dict[str, Any]:
+              name_f = get_field(item, key=NAME_KEY)
+              name = (name_f.get("text") if name_f else "") or ""
+
+              bday_f = get_field(item, column_id=BDAY_COL)
+              birthday = ((bday_f.get("date") or [""])[0] if bday_f else "") or ""
+
+              gender_f = get_field(item, column_id=GENDER_COL)
+              gender_opt = ((gender_f.get("select") or [""])[0] if gender_f else "") or ""
+              gender = GENDER_OPT_TO_MF.get(gender_opt)
+
+              time_f = get_field(item, column_id=TIME_COL)
+              time_opt = ((time_f.get("select") or [""])[0] if time_f else "") or ""
+              time_code = TIME_OPT_TO_CODE.get(time_opt, "12")  # default=모름
+
+              user_f = get_field(item, column_id=USER_COL)
+              users = (user_f.get("user") if user_f else []) or []
+              dm_user = users[0] if users else None
+
+              priv_f = get_field(item, column_id=PRIVATE_COL)
+              is_private = bool(priv_f.get("checkbox")) if priv_f else False
+
+              return {
+                  "name": name,
+                  "birthday": birthday,
+                  "gender": gender,
+                  "time_code": time_code,
+                  "dm_user_id": dm_user,
+                  "is_private": is_private,
+                  "item_id": item.get("id")
+              }
+
+          def fetch_items() -> List[Dict[str, Any]]:
+              res = slack_post("slackLists.items.list", {"list_id": LIST_ID, "limit": 200})
+              if not res.get("ok"):
+                  raise RuntimeError(f"slackLists.items.list failed: {res}")
+              return res.get("items", [])
+
+          def open_im(user_id: str) -> str:
+              res = slack_post("conversations.open", {"users": user_id})
+              if not res.get("ok"):
+                  raise RuntimeError(f"conversations.open failed: {res}")
+              return res["channel"]["id"]
+
+          def post_message(channel: str, text: str) -> None:
+              res = slack_post("chat.postMessage", {"channel": channel, "text": text})
+              if not res.get("ok"):
+                  raise RuntimeError(f"chat.postMessage failed: {res}")
+
+          # ---- Naver fortune scraping (Playwright) ----
+          NAVER_URL = "https://search.naver.com/search.naver?where=nexearch&sm=tab_etc&qvt=0&query=%EC%98%A4%EB%8A%98%20%EC%9A%B4%EC%84%B8"
+
+          def naver_get_today_total(page, *, gender: str, birthday: str, time_code: str) -> Dict[str, str]:
+              y, m, d = birthday.split("-")
+
+              page.goto(NAVER_URL, wait_until="networkidle")
+
+              # 성별 선택(텍스트 탭)
+              page.get_by_role("tab", name=("남성" if gender == "m" else "여성")).click()
+
+              # 생년월일 선택
+              page.locator("#fortune_birthCondition .pop_select_box ._trigger").click()
+              page.get_by_role("tab", name=y).click()
+              page.get_by_role("tab", name=str(int(m))).click()
+              page.get_by_role("tab", name=str(int(d))).click()
+              page.mouse.click(10, 10)
+
+              # 양력 고정(필요 시 클릭)
+              try:
+                  page.get_by_role("tab", name="양력").click(timeout=800)
+              except:
+                  pass
+
+              # 태어난 시 선택
+              page.locator("#fortune_birthCondition .time ._trigger").click()
+              page.locator(f'#fortune_birthCondition .time [data-kgs-option="{time_code}"]').click()
+
+              # 운세 확인하기
+              page.locator("#fortune_birthCondition ._resultBtn").click()
+              page.wait_for_selector("#fortune_birthResult", timeout=10000)
+
+              # 총운 텍스트 추출 (fallback 포함)
+              text = ""
+              for sel in [
+                  "#fortune_birthResult dl.infor._innerPanel dd p",
+                  "#fortune_birthResult dl.infor dd p",
+                  "#fortune_birthResult ._resultPanel dl.infor dd p",
+              ]:
+                  loc = page.locator(sel)
+                  if loc.count() > 0:
+                      text = loc.first.inner_text().strip()
+                      if text:
+                          break
+
+              keyword = ""
+              try:
+                  keyword = page.locator("#fortune_birthResult dl.infor._innerPanel dd strong").first.inner_text().strip()
+              except:
+                  pass
+
+              date_str = ""
+              try:
+                  date_str = page.locator("#fortune_birthResult dl.infor._innerPanel dd .result_date").first.inner_text().strip()
+              except:
+                  pass
+
+              return {"date": date_str, "keyword": keyword, "text": text}
+
+          def format_message(r: Dict[str, Any], fortune: Dict[str, str]) -> str:
+              lines = [f"*오늘의 운세(총운)* - {r['name']}"]
+              if fortune.get("date"):
+                  lines.append(f"날짜: {fortune['date']}")
+              if fortune.get("keyword"):
+                  lines.append(f"{fortune['keyword']}")
+              lines.append(fortune.get("text") or "(운세 본문을 가져오지 못했습니다. DOM 변경 가능성이 있습니다.)")
+              return "\n".join(lines)
+
+          def main():
+              items = fetch_items()
+              records = [extract_record(it) for it in items]
+
+              # 필수값 검증
+              valid = []
+              for r in records:
+                  if not r["name"] or not r["birthday"] or not r["gender"]:
+                      continue
+                  if r["is_private"] and not r["dm_user_id"]:
+                      # 비공개인데 DM 대상자가 없으면 전송 불가
+                      continue
+                  valid.append(r)
+
+              if not valid:
+                  print("No valid records.")
+                  return
+
+              with sync_playwright() as p:
+                  browser = p.chromium.launch(headless=True)
+                  page = browser.new_page()
+
+                  for r in valid:
+                      try:
+                          fortune = naver_get_today_total(
+                              page,
+                              gender=r["gender"],
+                              birthday=r["birthday"],
+                              time_code=r["time_code"]
+                          )
+                          msg = format_message(r, fortune)
+
+                          if r["is_private"]:
+                              im = open_im(r["dm_user_id"])
+                              post_message(im, msg)
+                          else:
+                              post_message(SLACK_CHANNEL_ID, msg)
+
+                          time.sleep(1.0)
+                      except Exception as e:
+                          print(f"ERROR for {r.get('name')} ({r.get('item_id')}): {e}")
+
+                  browser.close()
+
+          main()
+          PY
