@@ -1,20 +1,25 @@
-name: Slack Lists - items.list test
+name: Slack Lists - Dump schema + sample items
 
 on:
   workflow_dispatch:
     inputs:
       list_id:
-        description: "Exact list_id copied from Network (slackLists.items.list request)"
+        description: "List ID (e.g., F0A8F387LCS)"
         required: true
+      limit:
+        description: "Items to fetch"
+        required: false
+        default: "5"
 
 jobs:
-  test:
+  dump:
     runs-on: ubuntu-latest
     steps:
-      - name: Call auth.test and slackLists.items.list
+      - name: Dump list columns (probe) + items
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           LIST_ID: ${{ inputs.list_id }}
+          LIMIT: ${{ inputs.limit }}
         run: |
           set -euo pipefail
           python3 - << 'PY'
@@ -22,6 +27,7 @@ jobs:
 
           token = os.environ["SLACK_BOT_TOKEN"]
           list_id = os.environ["LIST_ID"]
+          limit = int(os.environ.get("LIMIT","5"))
 
           def post(method: str, payload: dict):
               url = f"https://slack.com/api/{method}"
@@ -32,12 +38,42 @@ jobs:
               with urllib.request.urlopen(req, timeout=30) as resp:
                   return json.loads(resp.read().decode("utf-8"))
 
+          # 1) columns/list schema probing (메서드명이 환경마다 다를 수 있어 후보를 돌려봄)
+          schema_methods = [
+              "slackLists.columns.list",
+              "slackLists.listColumns.list",
+              "slackLists.column.list",
+              "slackLists.columns.get",
+              "slackLists.getColumns",
+          ]
+
           print("=== auth.test ===")
           print(json.dumps(post("auth.test", {}), ensure_ascii=False, indent=2))
           print()
 
-          print("=== slackLists.items.list ===")
-          res = post("slackLists.items.list", {"list_id": list_id, "limit": 2})
-          print(json.dumps(res, ensure_ascii=False, indent=2)[:8000])
+          schema = None
+          chosen = None
+          for m in schema_methods:
+              res = post(m, {"list_id": list_id})
+              if res.get("ok"):
+                  schema = res
+                  chosen = m
+                  break
+              # unknown_method면 다음 후보로
+              if res.get("error") not in ("unknown_method", "method_not_found"):
+                  # 다른 에러(권한 등)면 기록하고 다음
+                  print(f"[schema probe] {m} -> {res.get('error')}")
+          if chosen:
+              print(f"=== LIST SCHEMA via {chosen} ===")
+              print(json.dumps(schema, ensure_ascii=False, indent=2)[:8000])
+          else:
+              print("=== LIST SCHEMA ===")
+              print("No supported schema method found from candidates.")
+              print("If you know the exact method name in your docs, tell me; we'll use it.")
+          print()
 
+          # 2) items list
+          print("=== slackLists.items.list ===")
+          items = post("slackLists.items.list", {"list_id": list_id, "limit": min(10, max(1, limit))})
+          print(json.dumps(items, ensure_ascii=False, indent=2)[:8000])
           PY
