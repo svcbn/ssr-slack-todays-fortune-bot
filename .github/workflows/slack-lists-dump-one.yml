@@ -1,21 +1,22 @@
-name: Slack Lists - Infer select option IDs (debug)
+name: Slack Lists - Build gender/time option maps
 
 on:
   workflow_dispatch:
     inputs:
       list_id:
-        description: "List ID (e.g., F0A8F387LCS)"
+        description: "List ID"
         required: true
+        default: "F0A8F387LCS"
       limit:
-        description: "How many items to scan (1-50)"
+        description: "Items to scan"
         required: false
-        default: "30"
+        default: "100"
 
 jobs:
-  infer:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Scan items and summarize select/user/date fields
+      - name: Build maps from TIME_TEST_* names
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           LIST_ID: ${{ inputs.list_id }}
@@ -23,12 +24,23 @@ jobs:
         run: |
           set -euo pipefail
           python3 - << 'PY'
-          import os, json, urllib.request, collections
+          import os, json, urllib.request, re
 
           token = os.environ["SLACK_BOT_TOKEN"]
           list_id = os.environ["LIST_ID"]
-          limit = int(os.environ.get("LIMIT","30"))
-          limit = max(1, min(50, limit))
+          limit = int(os.environ.get("LIMIT","100"))
+
+          GENDER_COL = "Col0A8FH3BN7L"
+          TIME_COL   = "Col0A8K6V4HDJ"
+
+          # 이름에 들어갈 라벨 기준(권장 포맷: TIME_TEST_01_자 ...)
+          # 네이버 인덱스: 자=0, 축=1, ... 해=11, 모름=12
+          TIME_LABEL_TO_CODE = {
+              "자": "0", "축": "1", "인": "2", "묘": "3",
+              "진": "4", "사": "5", "오": "6", "미": "7",
+              "신": "8", "유": "9", "술": "10", "해": "11",
+              "모름": "12",
+          }
 
           def post(method: str, payload: dict):
               url = f"https://slack.com/api/{method}"
@@ -39,46 +51,75 @@ jobs:
               with urllib.request.urlopen(req, timeout=30) as resp:
                   return json.loads(resp.read().decode("utf-8"))
 
-          res = post("slackLists.items.list", {"list_id": list_id, "limit": limit})
+          def get_name(item):
+              for f in item.get("fields", []):
+                  if f.get("key") == "name":
+                      return (f.get("text") or "").strip()
+              return ""
+
+          def get_select_opt(item, column_id):
+              for f in item.get("fields", []):
+                  if f.get("column_id") == column_id:
+                      sel = f.get("select") or []
+                      return sel[0] if sel else ""
+              return ""
+
+          res = post("slackLists.items.list", {"list_id": list_id, "limit": min(200, max(1, limit))})
           if not res.get("ok"):
               raise RuntimeError(res)
 
           items = res.get("items", [])
-          print(f"items_scanned={len(items)}")
-          print()
 
-          # column_id -> info
-          select_opts = collections.defaultdict(set)
-          user_cols = collections.defaultdict(int)
-          date_cols = collections.defaultdict(int)
-          text_cols = collections.defaultdict(int)
+          gender_map = {}  # opt -> "m"/"f"
+          time_map = {}    # opt -> "0"~"12"
 
+          # TIME_TEST_* 아이템들로부터 매핑 생성
           for it in items:
-              for f in it.get("fields", []):
-                  col = f.get("column_id") or f.get("key")
-                  if "select" in f and isinstance(f.get("select"), list):
-                      for opt in f["select"]:
-                          select_opts[col].add(opt)
-                  if "user" in f and isinstance(f.get("user"), list) and f["user"]:
-                      user_cols[col] += 1
-                  if "date" in f and isinstance(f.get("date"), list) and f["date"]:
-                      date_cols[col] += 1
-                  if f.get("key") == "name" or "rich_text" in f:
-                      text_cols[col] += 1
+              name = get_name(it)
+              if not name.startswith("TIME_TEST_"):
+                  continue
 
-          print("=== SELECT COLUMNS (column_id -> option_ids) ===")
-          out = {k: sorted(list(v)) for k, v in select_opts.items()}
-          print(json.dumps(out, ensure_ascii=False, indent=2))
-          print()
+              # name에서 시간 라벨 추출 (자/축/.../모름)
+              label = None
+              for k in TIME_LABEL_TO_CODE.keys():
+                  if k in name:
+                      label = k
+                      break
+              if not label:
+                  continue
 
-          print("=== USER COLUMNS (column_id -> nonempty_count) ===")
-          print(json.dumps(user_cols, ensure_ascii=False, indent=2))
-          print()
+              time_opt = get_select_opt(it, TIME_COL)
+              if time_opt:
+                  time_map[time_opt] = TIME_LABEL_TO_CODE[label]
 
-          print("=== DATE COLUMNS (column_id -> nonempty_count) ===")
-          print(json.dumps(date_cols, ensure_ascii=False, indent=2))
-          print()
+              # 성별은 name에 남성/여성 표시해두면 자동 가능
+              # (권장: TIME_TEST_.._자_남성 / ..._여성)
+              g_opt = get_select_opt(it, GENDER_COL)
+              if g_opt:
+                  if "여성" in name:
+                      gender_map[g_opt] = "f"
+                  elif "남성" in name:
+                      gender_map[g_opt] = "m"
 
-          print("=== TEXT-ish COLUMNS (column_id -> count) ===")
-          print(json.dumps(text_cols, ensure_ascii=False, indent=2))
+          print("=== GENERATED MAPS ===")
+          print(json.dumps({
+              "GENDER_OPT_TO_MF": gender_map,
+              "TIME_OPT_TO_CODE": time_map,
+              "notes": {
+                  "gender_col": GENDER_COL,
+                  "time_col": TIME_COL,
+                  "time_code_definition": "0=자 ... 11=해, 12=모름"
+              }
+          }, ensure_ascii=False, indent=2))
+
+          # 진단: 부족한 옵션이 무엇인지
+          missing_time_codes = sorted(set(TIME_LABEL_TO_CODE.values()) - set(time_map.values()), key=int)
+          if missing_time_codes:
+              print("\\n=== WARNING: missing time codes ===")
+              print(missing_time_codes)
+
+          if not gender_map:
+              print("\\n=== WARNING: gender map empty ===")
+              print("Put '남성'/'여성' text in TIME_TEST item names (recommended).")
+
           PY
