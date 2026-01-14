@@ -1,0 +1,93 @@
+name: Slack Lists - Dump One Item (debug)
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many items to fetch (1-10)"
+        required: false
+        default: "1"
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump one list item fields
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_LIST_ID: ${{ secrets.SLACK_LIST_ID }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          set -euo pipefail
+          python3 - << 'PY'
+          import os, json, urllib.request
+
+          token = os.environ["SLACK_BOT_TOKEN"]
+          list_id = os.environ["SLACK_LIST_ID"]
+          limit = int(os.environ.get("LIMIT","1"))
+          limit = max(1, min(10, limit))
+
+          def slack_api(method: str, payload: dict):
+              url = f"https://slack.com/api/{method}"
+              data = json.dumps(payload).encode("utf-8")
+              req = urllib.request.Request(url, data=data, method="POST")
+              req.add_header("Authorization", f"Bearer {token}")
+              req.add_header("Content-Type", "application/json; charset=utf-8")
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  body = resp.read().decode("utf-8")
+              obj = json.loads(body)
+              if not obj.get("ok"):
+                  raise RuntimeError(f"{method} failed: {obj}")
+              return obj
+
+          # 1) List items 가져오기 (최소 1개)
+          res = slack_api("slackLists.items.list", {"list_id": list_id, "limit": limit})
+          items = res.get("items", [])
+
+          print("=== slackLists.items.list result summary ===")
+          print("list_id:", list_id)
+          print("items_count:", len(items))
+          print()
+
+          if not items:
+              print("No items returned. (List is empty or token lacks permission)")
+              raise SystemExit(0)
+
+          # 2) 첫 아이템만 출력 (fields 중심)
+          it = items[0]
+          keep_keys = ["id", "created_ts", "updated_ts", "fields"]
+          out = {k: it.get(k) for k in keep_keys}
+
+          # 개인정보/민감정보를 최대한 줄이기 위해
+          # text/value가 길면 일부만 자르기
+          def truncate_fields(fields):
+              if not isinstance(fields, list):
+                  return fields
+              trimmed = []
+              for f in fields:
+                  if not isinstance(f, dict):
+                      trimmed.append(f)
+                      continue
+                  f2 = dict(f)
+                  for k in ["text", "value"]:
+                      if isinstance(f2.get(k), str) and len(f2[k]) > 80:
+                          f2[k] = f2[k][:80] + "...(truncated)"
+                  trimmed.append(f2)
+              return trimmed
+
+          out["fields"] = truncate_fields(out.get("fields"))
+
+          print("=== FIRST ITEM (sanitized) ===")
+          print(json.dumps(out, ensure_ascii=False, indent=2))
+          print()
+
+          # 3) fields 안에 어떤 타입이 있는지 키 통계
+          type_keys = {}
+          for f in (it.get("fields") or []):
+              if isinstance(f, dict):
+                  for k in f.keys():
+                      type_keys[k] = type_keys.get(k, 0) + 1
+          print("=== FIELD KEYS COUNT (for mapping) ===")
+          print(json.dumps(type_keys, ensure_ascii=False, indent=2))
+
+          PY
