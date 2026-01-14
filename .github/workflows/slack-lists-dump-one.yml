@@ -1,33 +1,47 @@
-name: Slack Lists - Dump One Item (debug)
+name: Slack Lists - Debug (auth + list probes)
 
 on:
   workflow_dispatch:
     inputs:
-      limit:
-        description: "How many items to fetch (1-10)"
+      list_id_a:
+        description: "Candidate list_id A (e.g., F0A8F387LCS)"
         required: false
-        default: "1"
+        default: ""
+      list_id_b:
+        description: "Candidate list_id B (e.g., TKHLNPYUV)"
+        required: false
+        default: ""
 
 jobs:
-  dump:
+  debug:
     runs-on: ubuntu-latest
     steps:
-      - name: Dump one list item fields
+      - name: Probe Slack Lists access
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          SLACK_LIST_ID: ${{ secrets.SLACK_LIST_ID }}
-          LIMIT: ${{ inputs.limit }}
+          LIST_ID_SECRET: ${{ secrets.SLACK_LIST_ID }}
+          LIST_ID_A: ${{ inputs.list_id_a }}
+          LIST_ID_B: ${{ inputs.list_id_b }}
         run: |
           set -euo pipefail
           python3 - << 'PY'
           import os, json, urllib.request
 
           token = os.environ["SLACK_BOT_TOKEN"]
-          list_id = os.environ["SLACK_LIST_ID"]
-          limit = int(os.environ.get("LIMIT","1"))
-          limit = max(1, min(10, limit))
+          list_ids = []
 
-          def slack_api(method: str, payload: dict):
+          # 1) Secrets에 들어있는 값도 후보로 넣고
+          sec = (os.environ.get("LIST_ID_SECRET") or "").strip()
+          if sec:
+              list_ids.append(sec)
+
+          # 2) workflow_dispatch inputs도 후보로 넣습니다.
+          for k in ["LIST_ID_A", "LIST_ID_B"]:
+              v = (os.environ.get(k) or "").strip()
+              if v and v not in list_ids:
+                  list_ids.append(v)
+
+          def post(method: str, payload: dict):
               url = f"https://slack.com/api/{method}"
               data = json.dumps(payload).encode("utf-8")
               req = urllib.request.Request(url, data=data, method="POST")
@@ -35,59 +49,27 @@ jobs:
               req.add_header("Content-Type", "application/json; charset=utf-8")
               with urllib.request.urlopen(req, timeout=30) as resp:
                   body = resp.read().decode("utf-8")
-              obj = json.loads(body)
-              if not obj.get("ok"):
-                  raise RuntimeError(f"{method} failed: {obj}")
-              return obj
+              return json.loads(body)
 
-          # 1) List items 가져오기 (최소 1개)
-          res = slack_api("slackLists.items.list", {"list_id": list_id, "limit": limit})
-          items = res.get("items", [])
-
-          print("=== slackLists.items.list result summary ===")
-          print("list_id:", list_id)
-          print("items_count:", len(items))
+          print("=== auth.test ===")
+          auth = post("auth.test", {})
+          print(json.dumps(auth, ensure_ascii=False, indent=2))
           print()
 
-          if not items:
-              print("No items returned. (List is empty or token lacks permission)")
+          if not list_ids:
+              print("No list_id candidates provided. Put SLACK_LIST_ID in secrets or pass inputs.")
               raise SystemExit(0)
 
-          # 2) 첫 아이템만 출력 (fields 중심)
-          it = items[0]
-          keep_keys = ["id", "created_ts", "updated_ts", "fields"]
-          out = {k: it.get(k) for k in keep_keys}
-
-          # 개인정보/민감정보를 최대한 줄이기 위해
-          # text/value가 길면 일부만 자르기
-          def truncate_fields(fields):
-              if not isinstance(fields, list):
-                  return fields
-              trimmed = []
-              for f in fields:
-                  if not isinstance(f, dict):
-                      trimmed.append(f)
-                      continue
-                  f2 = dict(f)
-                  for k in ["text", "value"]:
-                      if isinstance(f2.get(k), str) and len(f2[k]) > 80:
-                          f2[k] = f2[k][:80] + "...(truncated)"
-                  trimmed.append(f2)
-              return trimmed
-
-          out["fields"] = truncate_fields(out.get("fields"))
-
-          print("=== FIRST ITEM (sanitized) ===")
-          print(json.dumps(out, ensure_ascii=False, indent=2))
+          print("=== list_id candidates ===")
+          print(list_ids)
           print()
 
-          # 3) fields 안에 어떤 타입이 있는지 키 통계
-          type_keys = {}
-          for f in (it.get("fields") or []):
-              if isinstance(f, dict):
-                  for k in f.keys():
-                      type_keys[k] = type_keys.get(k, 0) + 1
-          print("=== FIELD KEYS COUNT (for mapping) ===")
-          print(json.dumps(type_keys, ensure_ascii=False, indent=2))
+          # items.list probe
+          for lid in list_ids:
+              print(f"=== slackLists.items.list probe: list_id={lid} ===")
+              res = post("slackLists.items.list", {"list_id": lid, "limit": 1})
+              # ok가 아니어도 출력하고 계속
+              print(json.dumps(res, ensure_ascii=False, indent=2)[:4000])
+              print()
 
           PY
