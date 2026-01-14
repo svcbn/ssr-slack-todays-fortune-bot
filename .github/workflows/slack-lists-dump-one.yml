@@ -1,21 +1,27 @@
-name: Slack Lists - List accessible lists (debug)
+name: Slack Lists - items.list test
 
 on:
   workflow_dispatch:
+    inputs:
+      list_id:
+        description: "Exact list_id copied from Network (slackLists.items.list request)"
+        required: true
 
 jobs:
-  list:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: List lists visible to bot
+      - name: Call auth.test and slackLists.items.list
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          LIST_ID: ${{ inputs.list_id }}
         run: |
           set -euo pipefail
           python3 - << 'PY'
           import os, json, urllib.request
 
           token = os.environ["SLACK_BOT_TOKEN"]
+          list_id = os.environ["LIST_ID"]
 
           def post(method: str, payload: dict):
               url = f"https://slack.com/api/{method}"
@@ -24,10 +30,14 @@ jobs:
               req.add_header("Authorization", f"Bearer {token}")
               req.add_header("Content-Type", "application/json; charset=utf-8")
               with urllib.request.urlopen(req, timeout=30) as resp:
-                  body = resp.read().decode("utf-8")
-              return json.loads(body)
+                  return json.loads(resp.read().decode("utf-8"))
 
-          print("=== slackLists.lists.list ===")
-          res = post("slackLists.lists.list", {"limit": 50})
+          print("=== auth.test ===")
+          print(json.dumps(post("auth.test", {}), ensure_ascii=False, indent=2))
+          print()
+
+          print("=== slackLists.items.list ===")
+          res = post("slackLists.items.list", {"list_id": list_id, "limit": 2})
           print(json.dumps(res, ensure_ascii=False, indent=2)[:8000])
+
           PY
