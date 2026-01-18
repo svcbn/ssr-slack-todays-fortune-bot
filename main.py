@@ -646,7 +646,7 @@ def run() -> None:
             
                 # 부모 메시지: (오늘 날짜) 오늘의 운세 도착! @태그
                 # today는 예: "2026년 1월 19일 월요일" 형태라고 가정
-                parent_text = f"({today}) 오늘의 운세 도착! {mention}".strip()
+                parent_text = f"({today_key}) 오늘의 운세 도착! {mention}".strip()
             
                 parent_ts = slack_post(cfg["slack_token"], cfg["channel_id"], parent_text)
                 slack_post(cfg["slack_token"], cfg["channel_id"], fortune_text, thread_ts=parent_ts)
