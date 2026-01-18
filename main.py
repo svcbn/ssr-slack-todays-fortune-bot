@@ -262,8 +262,13 @@ def audit_list(cfg: Dict[str, Any], items: List[Dict[str, Any]]) -> None:
     else:
         print("All items passed strict validation.")
 
-def today_str() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d")
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
+
+def today_kst() -> str:
+    return datetime.now(KST).strftime("%Y년 %-m월 %-d일 %A")
+
 
 
 def make_daily_signature(item_id: str, date_str: str) -> str:
@@ -298,6 +303,7 @@ def notify_admins_of_error(token: str, admin_ids: List[str], item_id: str, name:
 def build_prompt(r: Dict[str, Any]) -> str:
     gender_ko = "남성" if r["gender"] == "m" else "여성"
     time_ko = TIME_CODE_TO_LABEL.get(r["time_code"], "모름")
+    today = r["today"]
 
     return f"""
 너는 한국어로 작성되는 고급 일일 운세 칼럼의 전문 작가다.
@@ -330,13 +336,15 @@ def build_prompt(r: Dict[str, Any]) -> str:
 - 생년월일(양력): {r["birthday"]}
 - 성별: {gender_ko}
 - 출생시간: {time_ko}
+- 오늘 날짜: {today}
 
 ────────────────────
 [출력 형식 — 자리만 고정, 내용·제목은 전부 자유]
 ────────────────────
 
 ① 오늘의 운세 전체를 대표하는 메인 제목
-- 첫 줄: 날짜 (YYYY년 M월 D일 요일)
+- 첫 줄: 오늘 날짜를 그대로 사용한다 ({today})
+- 날짜는 절대 새로 만들거나 수정하지 않는다.
 - 둘째 줄: 오늘의 흐름을 상징하는 짧은 문구 또는 비유 1개
 
 ② 오늘의 전체 운세 해설 (2문단)
@@ -360,10 +368,6 @@ def build_prompt(r: Dict[str, Any]) -> str:
 - 각 줄은 하나의 문장
 - 태도 / 관계 / 자기 확신 관점에서 하나씩 제시한다.
 - 읽고 바로 실천할 수 있는 내용이어야 한다.
-
-⑥ 따뜻하게 마무리되는 마지막 문장
-- 독자를 다독이며 여운을 남긴다.
-- 과장하지 말고 차분하게 끝맺는다.
 
 [분량 가이드]
 - 전체 650~850자 내외
@@ -538,11 +542,14 @@ def build_rec_from_item(cfg: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, 
         "dm_targets": dm_targets,
     }
 
+def today_ymd_kst() -> str:
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    return now.strftime("%Y-%m-%d")
 
 def run() -> None:
     cfg = load_config()
     sent_signatures = set()
-    today = today_str()
+    today_key = today_ymd_kst()
 
     # Quick auth check (optional but helpful)
     auth = slack_api("auth.test", cfg["slack_token"], {})
@@ -564,15 +571,15 @@ def run() -> None:
         name_for_log = extract_name(it)
 
         # 실행 중 중복 방지(하루 1회 기준)
-        sig = make_daily_signature(item_id, today)
+        sig = make_daily_signature(item_id, today_key)
         if sig in sent_signatures:
             print(f"SKIP duplicate for today: {name_for_log} ({item_id})")
             continue
 
         try:
             r = build_rec_from_item(cfg, it)
-
-            prompt = build_prompt(r)
+            r2 = {**r, "today": today_kst()}
+            prompt = build_prompt(r2)
             fortune_text = gemini_generate_text(cfg["gemini_key"], cfg["gemini_model"], prompt)
             out_text = fortune_text
 
