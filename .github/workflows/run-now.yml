@@ -1,0 +1,49 @@
+name: fortune-bot (run now)
+
+on:
+  workflow_dispatch:
+  # 스케줄로 돌릴 때는 아래 주석 해제하고 원하는 시간으로 변경
+  # schedule:
+  #   - cron: "0 0 * * *"  # UTC 기준. KST 09:00은 UTC 00:00
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_LIST_ID: ${{ secrets.SLACK_LIST_ID }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}  # comma-separated Slack user IDs
+
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}      # e.g. gemini-1.5-flash-001 or as you set
+
+          # (선택) 컬럼/옵션이 고정이면 아래도 Secrets로 넣으면 더 안전함
+          GENDER_COL_ID: ${{ secrets.GENDER_COL_ID }}
+          TIME_COL_ID: ${{ secrets.TIME_COL_ID }}
+          BIRTHDAY_COL_ID: ${{ secrets.BIRTHDAY_COL_ID }}
+          PRIVATE_COL_ID: ${{ secrets.PRIVATE_COL_ID }}
+          ASSIGNEE_COL_ID: ${{ secrets.ASSIGNEE_COL_ID }}
+
+          # (선택) 성별 옵션/시간 옵션 ID 매핑을 Secrets로 override 가능
+          GENDER_OPT_M: ${{ secrets.GENDER_OPT_M }}
+          GENDER_OPT_F: ${{ secrets.GENDER_OPT_F }}
+        run: |
+          python main.py
