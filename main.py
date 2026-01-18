@@ -564,6 +564,9 @@ def today_ymd_kst() -> str:
     now = datetime.now(ZoneInfo("Asia/Seoul"))
     return now.strftime("%Y-%m-%d")
 
+def make_fortune_mention(user_id: str) -> str:
+    return f"오늘의 운세 도착! <@{user_id}>"
+
 def run() -> None:
     cfg = load_config()
     sent_signatures = set()
@@ -600,6 +603,15 @@ def run() -> None:
             prompt = build_prompt(r2)
             fortune_text = gemini_generate_text(cfg["gemini_key"], cfg["gemini_model"], prompt)
             out_text = fortune_text
+
+            if r["is_private"]:
+                out_text = fortune_text
+            else:
+                mention_uid = (r.get("dm_targets") or [None])[0]
+                if mention_uid:
+                    out_text = f"오늘의 운세 도착 <@{mention_uid}>\n\n{fortune_text}"
+                else:
+                    out_text = fortune_text
 
             if r["is_private"]:
                 for uid in r["dm_targets"]:
