@@ -477,10 +477,15 @@ def slack_open_dm(token: str, user_id: str) -> str:
     return channel_id
 
 
-def slack_post(token: str, channel: str, text: str) -> None:
-    data = slack_api("chat.postMessage", token, {"channel": channel, "text": text})
-    posted = ((data.get("message") or {}).get("text")) or ""
-    print(f"DEBUG post len: local={len(text)} slack={len(posted)}")
+def slack_post(token: str, channel: str, text: str, thread_ts: Optional[str] = None) -> str:
+    payload: Dict[str, Any] = {"channel": channel, "text": text}
+    if thread_ts:
+        payload["thread_ts"] = thread_ts
+    data = slack_api("chat.postMessage", token, payload)
+    ts = data.get("ts")
+    if not ts:
+        raise RuntimeError(f"chat.postMessage missing ts: {data}")
+    return str(ts)
 
 
 # -----------------------------
@@ -635,8 +640,19 @@ def run() -> None:
                 print(f"OK private DM sent for {r['name']} ({item_id}) to {len(r['dm_targets'])} users")
 
             else:
-                slack_post(cfg["slack_token"], cfg["channel_id"], out_text)
-                print(f"OK channel post sent for {r['name']} ({item_id}) -> {cfg['channel_id']}")
+                # 채널에는 요약 1줄만 올리고, 본문은 스레드로
+                mention_uid = (r.get("dm_targets") or [None])[0]
+                mention = f"<@{mention_uid}>" if mention_uid else ""
+            
+                # 부모 메시지: (오늘 날짜) 오늘의 운세 도착! @태그
+                # today는 예: "2026년 1월 19일 월요일" 형태라고 가정
+                parent_text = f"({today}) 오늘의 운세 도착! {mention}".strip()
+            
+                parent_ts = slack_post(cfg["slack_token"], cfg["channel_id"], parent_text)
+                slack_post(cfg["slack_token"], cfg["channel_id"], fortune_text, thread_ts=parent_ts)
+            
+                print(f"OK channel post sent as thread for {r['name']} ({item_id}) -> {cfg['channel_id']}")
+
 
             # ✅ 성공했을 때만 기록
             sent_signatures.add(sig)
