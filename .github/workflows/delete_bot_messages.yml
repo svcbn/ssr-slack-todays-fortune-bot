@@ -1,4 +1,4 @@
-name: delete_bot_message
+name: delete_bot_messages
 
 on:
   workflow_dispatch: {}
@@ -25,4 +25,4 @@ jobs:
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_TEST_CHANNEL_ID: ${{ secrets.SLACK_TEST_CHANNEL_ID }}
-        run: python tools/purge_test_channel.py
+        run: python tools/delete_bot_messages.py
