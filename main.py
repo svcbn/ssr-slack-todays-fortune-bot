@@ -166,6 +166,92 @@ def extract_user_ids(item: Dict[str, Any], col_id: str) -> List[str]:
         return [v]
     return []
 
+import re
+
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+def validate_item(cfg: Dict[str, Any], item: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """
+    Returns: (ok, errors[])
+    """
+    cols = cfg["cols"]
+    errs: List[str] = []
+    item_id = item.get("id", "")
+
+    # name
+    name = extract_name(item)
+    if not name or name == "(이름없음)":
+        errs.append("name: missing or empty")
+
+    # birthday: strict, only from configured column (NO auto-detect)
+    b = extract_birthday(item, cols["birthday_col"])
+    if not b or not DATE_RE.match(b):
+        errs.append(f"birthday: missing/invalid in col={cols['birthday_col']} (value={b})")
+
+    # gender
+    gopt = extract_select_option(item, cols["gender_col"])
+    if not gopt:
+        errs.append(f"gender: missing select in col={cols['gender_col']}")
+    else:
+        g = cfg["gender_opt_to_mf"].get(gopt)
+        if g not in ("m", "f"):
+            errs.append(f"gender: unknown option_id={gopt} (col={cols['gender_col']})")
+
+    # time
+    topt = extract_select_option(item, cols["time_col"])
+    if not topt:
+        errs.append(f"time: missing select in col={cols['time_col']}")
+    else:
+        tcode = cfg["time_opt_to_code"].get(topt)
+        if tcode is None:
+            errs.append(f"time: unknown option_id={topt} (col={cols['time_col']})")
+
+    # private checkbox
+    priv = extract_checkbox(item, cols["private_col"])
+    if priv is None:
+        # not fatal, but report
+        errs.append(f"private: missing checkbox field in col={cols['private_col']} (treated as False)")
+
+    # assignee users
+    assignees = extract_user_ids(item, cols["assignee_col"])
+    # if private is true, require dm targets (assignee or admin)
+    is_private = bool(priv) if priv is not None else False
+    if is_private:
+        dm_targets = list(dict.fromkeys([*assignees, *cfg["admin_user_ids"]]))
+        if not dm_targets:
+            errs.append(f"dm_targets: private=true but no assignee in col={cols['assignee_col']} and ADMIN_USER_IDS empty")
+
+    ok = (len([e for e in errs if not e.startswith("private:")]) == 0)  # private missing is warning only
+    return ok, errs
+
+
+def audit_list(cfg: Dict[str, Any], items: List[Dict[str, Any]]) -> None:
+    """
+    Prints a strict audit report of all items against known column ids and option ids.
+    """
+    total = len(items)
+    ok_count = 0
+    bad: List[Dict[str, Any]] = []
+
+    for it in items:
+        ok, errs = validate_item(cfg, it)
+        if ok:
+            ok_count += 1
+        else:
+            bad.append({
+                "id": it.get("id"),
+                "name": extract_name(it),
+                "errors": errs,
+            })
+
+    print("=== LIST AUDIT REPORT ===")
+    print(f"total_items={total} ok_items={ok_count} bad_items={len(bad)}")
+    if bad:
+        print("=== BAD ITEMS (need fixing in Slack List) ===")
+        print(json.dumps(bad, ensure_ascii=False, indent=2))
+    else:
+        print("All items passed strict validation.")
+
 
 # -----------------------------
 # Prompt builder (your "자리 고정 / 제목 유동" 설계)
@@ -394,6 +480,11 @@ def run() -> None:
     items = fetch_all_list_items(cfg["slack_token"], cfg["list_id"])
     if not items:
         print("No items in list. Done.")
+        return
+        
+    # Audit-only mode
+    if env("AUDIT_ONLY", "false").lower() == "true":
+        audit_list(cfg, items)
         return
 
     # 처리 대상: 일단 전부. (나중에 'enabled' 컬럼이나 'last_sent'로 필터링 가능)
