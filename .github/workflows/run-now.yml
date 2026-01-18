@@ -45,5 +45,7 @@ jobs:
           # (선택) 성별 옵션/시간 옵션 ID 매핑을 Secrets로 override 가능
           GENDER_OPT_M: ${{ secrets.GENDER_OPT_M }}
           GENDER_OPT_F: ${{ secrets.GENDER_OPT_F }}
+
+          AUDIT_ONLY: "true"
         run: |
           python main.py
