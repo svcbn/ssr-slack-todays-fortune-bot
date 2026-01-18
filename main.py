@@ -428,7 +428,7 @@ def load_config() -> Dict[str, Any]:
         "channel_id": env("SLACK_CHANNEL_ID", required=True),
         "admin_user_ids": parse_admin_ids(env("ADMIN_USER_IDS", "")),
         "gemini_key": env("GEMINI_API_KEY", required=True),
-        "gemini_model": env("GEMINI_MODEL", "gemini-3-flash"),
+        "gemini_model": env("GEMINI_MODEL", "gemini-3-flash-preview"),
     }
 
     # Column overrides
