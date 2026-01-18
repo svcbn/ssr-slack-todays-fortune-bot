@@ -361,43 +361,41 @@ def build_prompt(r: Dict[str, Any]) -> str:
 # Gemini call (REST generateContent)
 # -----------------------------
 def gemini_generate_text(api_key: str, model: str, prompt: str) -> str:
-    # Gemini API: generateContent endpoint :contentReference[oaicite:3]{index=3}
+
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": prompt}],
-            }
-        ],
-        # 필요 시 조절
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.8,
             "topP": 0.95,
             "maxOutputTokens": 1400,
         },
     }
-    resp = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=60)
+
+    resp = requests.post(
+        url,
+        headers={"Content-Type": "application/json"},
+        json=payload,
+        timeout=60,
+    )
     data = resp.json()
+
     if resp.status_code >= 400:
         raise RuntimeError(f"Gemini HTTP {resp.status_code}: {data}")
 
-    # Typical shape: candidates[0].content.parts[0].text
     cands = data.get("candidates") or []
     if not cands:
         raise RuntimeError(f"Gemini returned no candidates: {data}")
 
-    content = cands[0].get("content") or {}
-    parts = content.get("parts") or []
-    texts = []
-    for p in parts:
-        t = p.get("text")
-        if isinstance(t, str) and t.strip():
-            texts.append(t.strip())
+    parts = (cands[0].get("content") or {}).get("parts") or []
+    texts = [p["text"].strip() for p in parts if isinstance(p.get("text"), str)]
     out = "\n".join(texts).strip()
+
     if not out:
-        raise RuntimeError(f"Gemini returned empty text: {data}")
+        raise RuntimeError("Gemini returned empty text")
+
     return out
+
 
 
 # -----------------------------
@@ -546,9 +544,6 @@ def run() -> None:
             out_text = fortune_text
 
             if r["is_private"]:
-                if not r["dm_targets"]:
-                    raise RuntimeError("private=true but no dm_targets (assignee/admin)")
-
                 for uid in r["dm_targets"]:
                     dm_channel = slack_open_dm(cfg["slack_token"], uid)
                     slack_post(cfg["slack_token"], dm_channel, out_text)
