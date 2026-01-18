@@ -272,13 +272,13 @@ def audit_list(cfg: Dict[str, Any], items: List[Dict[str, Any]]) -> None:
 from datetime import datetime, timedelta, timezone
 
 WEEKDAY_KO = [
-    "월요일",  # 0
-    "화요일",  # 1
-    "수요일",  # 2
-    "목요일",  # 3
-    "금요일",  # 4
-    "토요일",  # 5
-    "일요일",  # 6
+    "월",  # 0
+    "화",  # 1
+    "수",  # 2
+    "목",  # 3
+    "금",  # 4
+    "토",  # 5
+    "일",  # 6
 ]
 
 KST = timezone(timedelta(hours=9))
@@ -286,7 +286,19 @@ KST = timezone(timedelta(hours=9))
 def today_kst() -> str:
     now = datetime.now(ZoneInfo("Asia/Seoul"))
     weekday_ko = WEEKDAY_KO[now.weekday()]
-    return f"{now.year}년 {now.month}월 {now.day}일 {weekday_ko}"
+    return f"{now.year}년 {now.month}월 {now.day}일 {weekday_ko}요일"
+
+def today_kst_dates():
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+
+    # 로직용 (중복 체크용)
+    ymd = now.strftime("%Y-%m-%d")
+
+    # 표시용: 1월 19일 (월)
+    weekday_ko = WEEKDAY_KO[now.weekday()]
+    pretty = f"{now.month}월{now.day}일({weekday_ko})"
+
+    return ymd, pretty
 
 def make_daily_signature(item_id: str, date_str: str) -> str:
     raw = f"{item_id}:{date_str}"
@@ -577,14 +589,10 @@ def build_rec_from_item(cfg: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, 
         "dm_targets": dm_targets,
     }
 
-def today_ymd_kst() -> str:
-    now = datetime.now(ZoneInfo("Asia/Seoul"))
-    return now.strftime("%Y-%m-%d")
-
 def run() -> None:
     cfg = load_config()
     sent_signatures = set()
-    today_key = today_ymd_kst()
+    today_key, today_pretty = today_kst_dates()
     force_send = env_bool("FORCE_SEND", False)
 
     # Quick auth check (optional but helpful)
@@ -646,7 +654,7 @@ def run() -> None:
             
                 # 부모 메시지: (오늘 날짜) 오늘의 운세 도착! @태그
                 # today는 예: "2026년 1월 19일 월요일" 형태라고 가정
-                parent_text = f"({today_key}) 오늘의 운세 도착! {mention}".strip()
+                parent_text = f"({today_pretty}) 오늘의 운세 도착! {mention}".strip()
             
                 parent_ts = slack_post(cfg["slack_token"], cfg["channel_id"], parent_text)
                 slack_post(cfg["slack_token"], cfg["channel_id"], fortune_text, thread_ts=parent_ts)
