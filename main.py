@@ -361,41 +361,57 @@ def build_prompt(r: Dict[str, Any]) -> str:
 # Gemini call (REST generateContent)
 # -----------------------------
 def gemini_generate_text(api_key: str, model: str, prompt: str) -> str:
-
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.8,
-            "topP": 0.95,
-            "maxOutputTokens": 1400,
-        },
-    }
 
-    resp = requests.post(
-        url,
-        headers={"Content-Type": "application/json"},
-        json=payload,
-        timeout=60,
-    )
-    data = resp.json()
+    def call(parts_text: str) -> Dict[str, Any]:
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": parts_text}]}],
+            "generationConfig": {
+                "temperature": 0.8,
+                "topP": 0.95,
+                "maxOutputTokens": 4096,  # 상향
+            },
+        }
+        resp = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=60)
+        data = resp.json()
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Gemini HTTP {resp.status_code}: {data}")
+        return data
 
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Gemini HTTP {resp.status_code}: {data}")
+    def extract_text(data: Dict[str, Any]) -> Tuple[str, str]:
+        cands = data.get("candidates") or []
+        if not cands:
+            raise RuntimeError(f"Gemini returned no candidates: {data}")
+        cand0 = cands[0]
+        finish = str(cand0.get("finishReason") or "")
+        content = cand0.get("content") or {}
+        parts = content.get("parts") or []
+        texts = [p.get("text", "").strip() for p in parts if isinstance(p.get("text"), str) and p.get("text", "").strip()]
+        return "\n".join(texts).strip(), finish
 
-    cands = data.get("candidates") or []
-    if not cands:
-        raise RuntimeError(f"Gemini returned no candidates: {data}")
+    # 1차
+    data1 = call(prompt)
+    text1, finish1 = extract_text(data1)
 
-    parts = (cands[0].get("content") or {}).get("parts") or []
-    texts = [p["text"].strip() for p in parts if isinstance(p.get("text"), str)]
-    out = "\n".join(texts).strip()
+    if not text1:
+        raise RuntimeError("Gemini returned empty text (first call)")
 
-    if not out:
-        raise RuntimeError("Gemini returned empty text")
+    # MAX_TOKENS이면 1회만 이어쓰기
+    if finish1.upper() == "MAX_TOKENS":
+        cont_prompt = (
+            "아래 글은 길이 제한으로 중간에서 끊겼다.\n"
+            "바로 이어서 남은 부분만 한국어로 작성하되, 중복 없이 자연스럽게 마무리해라.\n"
+            "추가 설명이나 머리말 없이 '이어지는 본문'만 출력해라.\n\n"
+            "=== 끊긴 글 ===\n"
+            f"{text1}\n"
+            "=== 여기서부터 이어쓰기 ==="
+        )
+        data2 = call(cont_prompt)
+        text2, _ = extract_text(data2)
+        if text2:
+            return (text1.rstrip() + "\n" + text2.lstrip()).strip()
 
-    return out
-
+    return text1
 
 
 # -----------------------------
