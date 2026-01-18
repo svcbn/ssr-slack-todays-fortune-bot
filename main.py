@@ -428,8 +428,9 @@ def slack_open_dm(token: str, user_id: str) -> str:
 
 
 def slack_post(token: str, channel: str, text: str) -> None:
-    # chat.postMessage :contentReference[oaicite:5]{index=5}
-    slack_api("chat.postMessage", token, {"channel": channel, "text": text})
+    data = slack_api("chat.postMessage", token, {"channel": channel, "text": text})
+    posted = ((data.get("message") or {}).get("text")) or ""
+    print(f"DEBUG post len: local={len(text)} slack={len(posted)}")
 
 
 # -----------------------------
