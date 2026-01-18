@@ -35,6 +35,6 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}      # e.g. gemini-1.5-flash-001 or as you set
 
-          AUDIT_ONLY: "true"
+          AUDIT_ONLY: "false"
         run: |
           python main.py
