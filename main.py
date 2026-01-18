@@ -3,6 +3,8 @@ import json
 import time
 import requests
 from typing import Any, Dict, List, Optional, Tuple
+import hashlib
+from datetime import datetime
 
 
 # -----------------------------
@@ -60,9 +62,17 @@ TIME_CODE_TO_LABEL = {
 # Utilities
 # -----------------------------
 def env(name: str, default: Optional[str] = None, required: bool = False) -> str:
-    v = os.getenv(name, default)
+    v = os.getenv(name)
+    if v is None:
+        v = default
+
+    # 핵심: 빈 문자열/공백이면 default로 대체
+    if isinstance(v, str) and v.strip() == "":
+        v = default
+
     if required and (v is None or str(v).strip() == ""):
         raise RuntimeError(f"Missing required env var: {name}")
+
     return str(v).strip() if v is not None else ""
 
 
@@ -251,6 +261,35 @@ def audit_list(cfg: Dict[str, Any], items: List[Dict[str, Any]]) -> None:
         print(json.dumps(bad, ensure_ascii=False, indent=2))
     else:
         print("All items passed strict validation.")
+
+def today_str() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d")
+
+
+def make_daily_signature(item_id: str, date_str: str) -> str:
+    raw = f"{item_id}:{date_str}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+def notify_admins_of_error(token: str, admin_ids: List[str], item_id: str, name: str, error: Exception) -> None:
+    if not admin_ids:
+        return
+
+    msg = (
+        f"⚠️ 운세봇 처리 오류\n\n"
+        f"- 이름: {name}\n"
+        f"- item_id: {item_id}\n"
+        f"- 오류: {str(error)}\n\n"
+        f"해당 항목만 스킵하고 나머지는 정상 처리되었습니다."
+    )
+
+    for uid in admin_ids:
+        try:
+            ch = slack_open_dm(token, uid)
+            slack_post(token, ch, msg)
+            time.sleep(0.3)
+        except Exception:
+            pass  # 관리자 알림 실패는 무시
+
 
 
 # -----------------------------
@@ -471,6 +510,8 @@ def build_rec_from_item(cfg: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, 
 
 def run() -> None:
     cfg = load_config()
+    sent_signatures = set()
+    today = today_str()
 
     # Quick auth check (optional but helpful)
     auth = slack_api("auth.test", cfg["slack_token"], {})
@@ -481,22 +522,27 @@ def run() -> None:
     if not items:
         print("No items in list. Done.")
         return
-        
+
     # Audit-only mode
     if env("AUDIT_ONLY", "false").lower() == "true":
         audit_list(cfg, items)
         return
 
-    # 처리 대상: 일단 전부. (나중에 'enabled' 컬럼이나 'last_sent'로 필터링 가능)
     for it in items:
         item_id = it.get("id", "")
+        name_for_log = extract_name(it)
+
+        # 실행 중 중복 방지(하루 1회 기준)
+        sig = make_daily_signature(item_id, today)
+        if sig in sent_signatures:
+            print(f"SKIP duplicate for today: {name_for_log} ({item_id})")
+            continue
+
         try:
             r = build_rec_from_item(cfg, it)
+
             prompt = build_prompt(r)
             fortune_text = gemini_generate_text(cfg["gemini_key"], cfg["gemini_model"], prompt)
-
-            # Slack 전송 텍스트 (그대로 전달)
-            # 필요하면 여기서 상단에 멘션/헤더 추가 가능
             out_text = fortune_text
 
             if r["is_private"]:
@@ -506,16 +552,27 @@ def run() -> None:
                 for uid in r["dm_targets"]:
                     dm_channel = slack_open_dm(cfg["slack_token"], uid)
                     slack_post(cfg["slack_token"], dm_channel, out_text)
-                    time.sleep(0.4)  # API 레이트 리밋 완화
+                    time.sleep(0.4)
+
                 print(f"OK private DM sent for {r['name']} ({item_id}) to {len(r['dm_targets'])} users")
+
             else:
                 slack_post(cfg["slack_token"], cfg["channel_id"], out_text)
                 print(f"OK channel post sent for {r['name']} ({item_id}) -> {cfg['channel_id']}")
 
-        except Exception as e:
-            # 실패는 채널에 올리지 않고, 로그만 남김
-            print(f"ERROR item={item_id}: {e}")
+            # ✅ 성공했을 때만 기록
+            sent_signatures.add(sig)
 
+        except Exception as e:
+            print(f"ERROR item={item_id} ({name_for_log}): {e}")
+            notify_admins_of_error(
+                cfg["slack_token"],
+                cfg["admin_user_ids"],
+                item_id,
+                name_for_log,
+                e,
+            )
+            continue
 
 if __name__ == "__main__":
     run()
