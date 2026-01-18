@@ -264,12 +264,22 @@ def audit_list(cfg: Dict[str, Any], items: List[Dict[str, Any]]) -> None:
 
 from datetime import datetime, timedelta, timezone
 
+WEEKDAY_KO = [
+    "월요일",  # 0
+    "화요일",  # 1
+    "수요일",  # 2
+    "목요일",  # 3
+    "금요일",  # 4
+    "토요일",  # 5
+    "일요일",  # 6
+]
+
 KST = timezone(timedelta(hours=9))
 
 def today_kst() -> str:
-    return datetime.now(KST).strftime("%Y년 %-m월 %-d일 %A")
-
-
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    weekday_ko = WEEKDAY_KO[now.weekday()]
+    return f"{now.year}년 {now.month}월 {now.day}일 {weekday_ko}"
 
 def make_daily_signature(item_id: str, date_str: str) -> str:
     raw = f"{item_id}:{date_str}"
