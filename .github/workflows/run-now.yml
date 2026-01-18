@@ -35,17 +35,6 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}      # e.g. gemini-1.5-flash-001 or as you set
 
-          # (선택) 컬럼/옵션이 고정이면 아래도 Secrets로 넣으면 더 안전함
-          GENDER_COL_ID: ${{ secrets.GENDER_COL_ID }}
-          TIME_COL_ID: ${{ secrets.TIME_COL_ID }}
-          BIRTHDAY_COL_ID: ${{ secrets.BIRTHDAY_COL_ID }}
-          PRIVATE_COL_ID: ${{ secrets.PRIVATE_COL_ID }}
-          ASSIGNEE_COL_ID: ${{ secrets.ASSIGNEE_COL_ID }}
-
-          # (선택) 성별 옵션/시간 옵션 ID 매핑을 Secrets로 override 가능
-          GENDER_OPT_M: ${{ secrets.GENDER_OPT_M }}
-          GENDER_OPT_F: ${{ secrets.GENDER_OPT_F }}
-
           AUDIT_ONLY: "true"
         run: |
           python main.py
