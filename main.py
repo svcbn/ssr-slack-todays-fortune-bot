@@ -75,6 +75,13 @@ def env(name: str, default: Optional[str] = None, required: bool = False) -> str
 
     return str(v).strip() if v is not None else ""
 
+def env_bool(name: str, default: bool = False) -> bool:
+    v = (os.getenv(name) or "").strip().lower()
+    if v in ("1", "true", "yes", "y", "on"):
+        return True
+    if v in ("0", "false", "no", "n", "off"):
+        return False
+    return default
 
 def slack_api(method: str, token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     # Slack Web API is form-encoded for most methods; JSON works for some, but form is safest.
@@ -569,13 +576,11 @@ def today_ymd_kst() -> str:
     now = datetime.now(ZoneInfo("Asia/Seoul"))
     return now.strftime("%Y-%m-%d")
 
-def make_fortune_mention(user_id: str) -> str:
-    return f"오늘의 운세 도착! <@{user_id}>"
-
 def run() -> None:
     cfg = load_config()
     sent_signatures = set()
     today_key = today_ymd_kst()
+    force_send = env_bool("FORCE_SEND", False)
 
     # Quick auth check (optional but helpful)
     auth = slack_api("auth.test", cfg["slack_token"], {})
@@ -598,10 +603,13 @@ def run() -> None:
 
         # 실행 중 중복 방지(하루 1회 기준)
         sig = make_daily_signature(item_id, today_key)
-        if sig in sent_signatures:
+        if (not force_send) and (sig in sent_signatures):
             print(f"SKIP duplicate for today: {name_for_log} ({item_id})")
             continue
 
+        if force_send:
+            print("FORCE_SEND enabled.")
+            
         try:
             r = build_rec_from_item(cfg, it)
             r2 = {**r, "today": today_kst()}
@@ -614,7 +622,7 @@ def run() -> None:
             else:
                 mention_uid = (r.get("dm_targets") or [None])[0]
                 if mention_uid:
-                    out_text = f"오늘의 운세 도착 <@{mention_uid}>\n\n{fortune_text}"
+                    out_text = f"오늘의 운세 도착! <@{mention_uid}>\n\n{fortune_text}"
                 else:
                     out_text = fortune_text
 
