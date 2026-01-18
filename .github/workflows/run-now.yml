@@ -38,10 +38,11 @@ jobs:
           SLACK_LIST_ID: ${{ secrets.SLACK_LIST_ID }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
           ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}  # comma-separated Slack user IDs
-
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}      # e.g. gemini-1.5-flash-001 or as you set
 
           AUDIT_ONLY: "false"
+          FORCE_SEND: ${{ github.event.inputs.force_send }}
+          
         run: |
           python main.py
