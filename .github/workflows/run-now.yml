@@ -2,9 +2,16 @@ name: fortune-bot (run now)
 
 on:
   workflow_dispatch:
-  # 스케줄로 돌릴 때는 아래 주석 해제하고 원하는 시간으로 변경
-  # schedule:
-  #   - cron: "0 0 * * *"  # UTC 기준. KST 09:00은 UTC 00:00
+    inputs:
+      force_send:
+        description: "Force send"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # KST 10:05 (주말 제외) = UTC 01:05 (월~금)
+    - cron: "5 1 * * 1-5"
+
 
 jobs:
   run:
