@@ -8,6 +8,11 @@ on:
         required: false
         type: boolean
         default: false
+      admin_only:
+        description: "Manual test"
+        required: false
+        type: boolean
+        default: true
   schedule:
     # KST 10:05 (주말 제외) = UTC 01:05 (월~금)
     - cron: "5 1 * * 1-5"
@@ -43,6 +48,6 @@ jobs:
 
           AUDIT_ONLY: "false"
           FORCE_SEND: ${{ github.event.inputs.force_send }}
-          
+          ADMIN_ONLY: ${{ github.event.inputs.admin_only }}
         run: |
           python main.py
