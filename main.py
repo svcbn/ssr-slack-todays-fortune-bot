@@ -604,6 +604,7 @@ def run() -> None:
     cfg = load_config()
     sent_signatures = set()
     today_key, today_pretty = today_kst_dates()
+    admin_only = env_bool("ADMIN_ONLY", False)
     force_send = env_bool("FORCE_SEND", False)
 
     # Quick auth check (optional but helpful)
@@ -641,6 +642,17 @@ def run() -> None:
             fortune_text = gemini_generate_text(cfg["gemini_key"], cfg["gemini_model"], prompt)
             out_text = fortune_text
 
+            if admin_only:
+                if not cfg["admin_user_ids"]:
+                    raise RuntimeError("ADMIN_ONLY requires ADMIN_USER_IDS (at least one).")
+            
+                target_admin = cfg["admin_user_ids"][0]
+                dm_channel = slack_open_dm(cfg["slack_token"], target_admin)
+            
+                slack_post(cfg["slack_token"], dm_channel, out_text)
+                print(f"OK admin_only: sent ONE DM to admin={target_admin} (from item {r['name']} / {item_id})")
+                break
+            
             if r["is_private"]:
                 out_text = fortune_text
             else:
