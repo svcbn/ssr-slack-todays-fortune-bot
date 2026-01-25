@@ -339,47 +339,25 @@ def build_prompt(r: Dict[str, Any]) -> str:
 아래 출력은 엔터테인먼트와 자기 성찰을 위한 창작물이며,
 과학적 사실이나 실제 예언을 주장하지 않는다.
 
-⚠️ 매우 중요 (톤 & 가독성 규칙)
-- 문단당 최대 3~4문장으로 제한한다.
-- 문장은 말하듯 자연스럽게 쓴다. 시처럼 끊어 나열하지 않는다.
-- 문장 길이는 보통 25~35자 내외로 유지하되,
-  의미 설명이 필요한 경우 자연스럽게 늘려도 된다.
-- 비유와 은유는 섹션당 최대 1개만 사용하며,
-  비유를 쓴 뒤에는 반드시 의미를 바로 풀어 설명한다.
-- 현학적인 표현, 과도한 수식어, 추상명사 남용을 피한다.
-- 독자가 읽자마자 이해할 수 있게 명확하게 쓴다.
-- Slack 메시지에 적합하도록 문단 사이에 약간 줄 간격을 둔다.
+⚠️ 작성 규칙
+- 문단당 3~4문장, 말하듯 자연스럽게 작성한다.
+- 과장·현학 표현을 피하고, 읽자마자 이해되게 쓴다.
+- 섹션당 비유는 1개 이하로 사용하고, 의미를 바로 설명한다.
+- Slack 메시지에 맞게 문단 사이에 여백을 둔다.
 
-⚠️ 해석 규칙 (중요)
-- 사주 용어는 최대 3~4개까지만 사용한다.
-- 사용한 용어는 즉시 일상 언어로 풀어 설명한다.
-- 사주 용어가 글의 주인공이 되지 않도록 한다.
-- 오늘 해석의 중심은 ‘오늘 가장 강하게 작용하는 한 가지 요소’다.
-- 아래 후보 중 하나를 선택해 중심축으로 삼아라:
-  · 오늘의 십성 변화
-  · 오늘의 오행 흐름 변화
-  · 오늘의 합 또는 충
-- 선택한 중심축은 글 전체에서 일관되게 활용한다.
-- ‘항상 좋다’는 인상을 주지 않도록 균형 톤을 유지한다.
+⚠️ 해석 규칙
+- 사주 용어는 최대 3~4개, 즉시 일상 언어로 풀어 쓴다.
+- 오늘 해석의 중심은 하나만 선택해 글 전체에 일관되게 사용한다.
+  (십성 변화 / 오행 흐름 / 합·충 중 하나)
+- 항상 긍정 일변도가 되지 않도록 균형 톤을 유지한다.
 
 ⚠️ 구조 규칙
-- 개별 항목의 소제목은 사용하지 않는다.
-- 아래에 지정된 '고정된 섹션 제목'만 사용한다.
-- 메인 제목과 고정된 섹션 제목은 Slack 표기법에 따라
-  반드시 *한 개의 별표(*)*로 감싼 굵은 글씨를 사용한다.
-- 두 개의 별표(**)는 절대 사용하지 않는다.
-- 각 섹션의 고정된 제목에는 제목의 의미에 어울리는 이모지를
-  같은 이모지로 1개씩 사용해 반드시 제목의 앞뒤를 감싸며 사용한다.
-- 이모지는 장식이 아닌 ‘아이콘’ 역할로 사용하며,
-  과한 감정 표현이나 얼굴 이모지는 사용하지 않는다.
-- 이모지는 슬랙에서 사용 가능한 것을 우선한다.
-- 아래에 지정된 섹션 구분을 기준으로
-  문단을 나누어 작성한다.
-- 아래는 ‘형식의 자리’만 고정이며,
-  제목·표현은 매번 새롭게 만든다.
-- 제목이나 항목명을 반복하거나 고정하지 않는다.
-- 단정적 표현(반드시 / 확정 / 무조건)은 사용하지 않는다.
-- 공포, 질병, 재난, 죽음, 폭력, 특정 투자 종목 언급 금지.
+- 개별 소제목은 쓰지 않는다.
+- 아래에 지정된 고정 섹션 제목만 사용한다.
+- 모든 제목은 Slack 굵은 글씨(*)로 표기한다.
+- 각 고정 섹션 제목 앞에 의미에 맞는 이모지 1개를 사용한다.
+- 공포·질병·재난·죽음·폭력·투자 종목은 언급하지 않는다.
+
 
 [입력 정보]
 - 이름: {r["name"]}
@@ -436,55 +414,50 @@ def build_prompt(r: Dict[str, Any]) -> str:
 def gemini_generate_text(api_key: str, model: str, prompt: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
-    def call(parts_text: str) -> Dict[str, Any]:
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": parts_text}]}],
-            "generationConfig": {
-                "temperature": 0.8,
-                "topP": 0.95,
-                "maxOutputTokens": 4096,  # 상향
-            },
-        }
-        resp = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=60)
-        data = resp.json()
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Gemini HTTP {resp.status_code}: {data}")
-        return data
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.8,
+            "topP": 0.95,
+            "maxOutputTokens": 1400,
+        },
+    }
 
-    def extract_text(data: Dict[str, Any]) -> Tuple[str, str]:
+    def _extract_text(data: Dict[str, Any]) -> str:
         cands = data.get("candidates") or []
         if not cands:
-            raise RuntimeError(f"Gemini returned no candidates: {data}")
-        cand0 = cands[0]
-        finish = str(cand0.get("finishReason") or "")
-        content = cand0.get("content") or {}
+            return ""
+        content = cands[0].get("content") or {}
         parts = content.get("parts") or []
-        texts = [p.get("text", "").strip() for p in parts if isinstance(p.get("text"), str) and p.get("text", "").strip()]
-        return "\n".join(texts).strip(), finish
+        texts = []
+        for p in parts:
+            t = p.get("text")
+            if isinstance(t, str) and t.strip():
+                texts.append(t.strip())
+        return "\n".join(texts).strip()
 
-    # 1차
-    data1 = call(prompt)
-    text1, finish1 = extract_text(data1)
+    # 빈 응답만 재시도 (HTTP 에러는 그대로 raise)
+    max_tries = 3
+    base_sleep = 1.5
 
-    if not text1:
-        raise RuntimeError("Gemini returned empty text (first call)")
+    last_data: Optional[Dict[str, Any]] = None
+    for attempt in range(1, max_tries + 1):
+        resp = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=60)
+        data = resp.json()
+        last_data = data
 
-    # MAX_TOKENS이면 1회만 이어쓰기
-    if finish1.upper() == "MAX_TOKENS":
-        cont_prompt = (
-            "아래 글은 길이 제한으로 중간에서 끊겼다.\n"
-            "바로 이어서 남은 부분만 한국어로 작성하되, 중복 없이 자연스럽게 마무리해라.\n"
-            "추가 설명이나 머리말 없이 '이어지는 본문'만 출력해라.\n\n"
-            "=== 끊긴 글 ===\n"
-            f"{text1}\n"
-            "=== 여기서부터 이어쓰기 ==="
-        )
-        data2 = call(cont_prompt)
-        text2, _ = extract_text(data2)
-        if text2:
-            return (text1.rstrip() + "\n" + text2.lstrip()).strip()
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Gemini HTTP {resp.status_code}: {data}")
 
-    return text1
+        out = _extract_text(data)
+        if out:
+            return out
+
+        # 여기서만 "빈 텍스트" 재시도
+        if attempt < max_tries:
+            time.sleep(base_sleep * attempt)
+
+    raise RuntimeError("Gemini returned empty text (after retries)")
 
 
 # -----------------------------
