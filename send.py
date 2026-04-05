@@ -98,7 +98,9 @@ def send_fortune_admin_only(
     fortune_text = fortune["fortune_text"]
 
     dm_channel = slack_open_dm(token, admin_uid)
-    slack_post(token, dm_channel, fortune_text)
+    # 테스트 모드에서는 누구의 운세인지 헤더를 붙여서 전송
+    header = f"──── [{name}] ────\n"
+    slack_post(token, dm_channel, header + fortune_text)
 
     print(f"  → 관리자 DM 전송: {name} → {admin_uid}")
 
@@ -109,9 +111,17 @@ def send_fortune_admin_only(
 
 def run() -> None:
     cfg = load_config()
-    today_date, today_pretty = today_kst_dates()
-    admin_only = env_bool("ADMIN_ONLY", False)
+    test_mode = env("TEST_MODE", "off").strip().lower()  # off / single / all
     force_send = env_bool("FORCE_SEND", False)
+
+    # Get target date (from env or today)
+    target_date_str = env("TARGET_DATE", "").strip()
+    if target_date_str:
+        today_date = target_date_str
+        today_pretty = target_date_str  # simplified for test mode
+        print(f"Using target date: {today_date}")
+    else:
+        today_date, today_pretty = today_kst_dates()
 
     # JSON 파일 경로 결정
     json_path = env("FORTUNE_JSON", "")
@@ -156,18 +166,16 @@ def run() -> None:
         print(f"[{i}/{len(ok_fortunes)}] {name}...", end="")
 
         try:
-            if admin_only:
-                # 관리자 테스트 모드
+            if test_mode in ("single", "all"):
+                # 테스트 모드: admin에게만 DM 전송
                 if not cfg["admin_user_ids"]:
-                    raise RuntimeError("ADMIN_ONLY requires ADMIN_USER_IDS")
+                    raise RuntimeError("TEST_MODE requires ADMIN_USER_IDS")
                 send_fortune_admin_only(
                     cfg["slack_token"],
                     cfg["admin_user_ids"][0],
                     fortune,
                 )
                 sent_count += 1
-                # admin_only에서는 첫 번째 항목만 전송
-                break
 
             elif is_private:
                 # DM 전송

@@ -383,18 +383,27 @@ def run() -> None:
     # Ensure output directory exists
     ensure_output_dir(cfg["output_dir"])
 
-    # Get today's date
-    today_date, today_pretty = today_kst_dates()
-    today_kst_str = today_pretty  # Already in format like "1월 19일(월)"
-
-    # Also need the full Korean format for prompts
-    now = datetime.now(ZoneInfo("Asia/Seoul"))
-    weekday_ko = WEEKDAY_KO[now.weekday()]
-    today_kst_full = f"{now.year}년 {now.month}월 {now.day}일 {weekday_ko}요일"
+    # Get target date (from env or today)
+    target_date_str = env("TARGET_DATE", "").strip()
+    if target_date_str:
+        # Validate format
+        try:
+            td = datetime.strptime(target_date_str, "%Y-%m-%d")
+            today_date = target_date_str
+            weekday_ko = WEEKDAY_KO[td.weekday()]
+            today_kst_full = f"{td.year}년 {td.month}월 {td.day}일 {weekday_ko}요일"
+            print(f"Using target date: {today_date}")
+        except ValueError:
+            raise RuntimeError(f"Invalid TARGET_DATE format: {target_date_str} (expected YYYY-MM-DD)")
+    else:
+        today_date, today_pretty = today_kst_dates()
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
+        weekday_ko = WEEKDAY_KO[now.weekday()]
+        today_kst_full = f"{now.year}년 {now.month}월 {now.day}일 {weekday_ko}요일"
 
     # Check audit mode
     audit_only = env_bool("AUDIT_ONLY", False)
-    admin_only = env_bool("ADMIN_ONLY", False)
+    test_mode = env("TEST_MODE", "off").strip().lower()  # off / single / all
 
     # Fetch items
     print("Fetching items from Slack Lists...")
@@ -410,16 +419,18 @@ def run() -> None:
         audit_list(cfg, items)
         return
 
-    # Filter for admin only if requested
-    if admin_only:
-        print(f"ADMIN_ONLY mode: Processing only items assigned to admins")
+    # Test mode handling
+    if test_mode == "single":
+        print(f"TEST_MODE=single: Generating for admin user only")
         if not cfg["admin_user_ids"]:
-            raise RuntimeError("ADMIN_ONLY requires ADMIN_USER_IDS")
+            raise RuntimeError("TEST_MODE=single requires ADMIN_USER_IDS")
         items = [
             item for item in items
             if set(extract_user_ids(item, cfg["cols"]["assignee_col"])) & set(cfg["admin_user_ids"])
         ]
         print(f"Filtered to {len(items)} admin-associated items")
+    elif test_mode == "all":
+        print(f"TEST_MODE=all: Generating for all users (send will go to admin only)")
 
     # Generate fortunes
     fortunes = []
