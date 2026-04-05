@@ -3,16 +3,25 @@ name: fortune-bot (generate)
 on:
   workflow_dispatch:
     inputs:
-      admin_only:
-        description: "Admin items only (test)"
+      test_mode:
+        description: "Test: off / single (admin 1명) / all (전체→admin DM)"
         required: false
-        type: boolean
-        default: false
+        type: choice
+        options:
+          - "off"
+          - "single"
+          - "all"
+        default: "off"
       audit_only:
         description: "Audit/validate only (no generation)"
         required: false
         type: boolean
         default: false
+      target_date:
+        description: "Target date (YYYY-MM-DD), blank = today"
+        required: false
+        type: string
+        default: ""
   schedule:
     # KST 09:50 (주말 제외) = UTC 00:50 (월~금)
     # generate를 먼저 실행 → 10:05에 send 실행
@@ -46,7 +55,8 @@ jobs:
           CLAUDE_MODEL: ${{ secrets.CLAUDE_MODEL }}
           OUTPUT_DIR: "output"
           AUDIT_ONLY: ${{ github.event.inputs.audit_only || 'false' }}
-          ADMIN_ONLY: ${{ github.event.inputs.admin_only || 'false' }}
+          TEST_MODE: ${{ github.event.inputs.test_mode || 'off' }}
+          TARGET_DATE: ${{ github.event.inputs.target_date || '' }}
         run: |
           python generate.py
 
@@ -90,6 +100,7 @@ jobs:
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
           ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
           OUTPUT_DIR: "output"
-          ADMIN_ONLY: ${{ github.event.inputs.admin_only || 'false' }}
+          TEST_MODE: ${{ github.event.inputs.test_mode || 'off' }}
+          TARGET_DATE: ${{ github.event.inputs.target_date || '' }}
         run: |
           python send.py
