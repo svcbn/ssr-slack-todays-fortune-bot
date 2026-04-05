@@ -1,0 +1,95 @@
+name: fortune-bot (generate)
+
+on:
+  workflow_dispatch:
+    inputs:
+      admin_only:
+        description: "Admin items only (test)"
+        required: false
+        type: boolean
+        default: false
+      audit_only:
+        description: "Audit/validate only (no generation)"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # KST 09:50 (주말 제외) = UTC 00:50 (월~금)
+    # generate를 먼저 실행 → 10:05에 send 실행
+    - cron: "50 0 * * 1-5"
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate fortunes
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_LIST_ID: ${{ secrets.SLACK_LIST_ID }}
+          ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ secrets.CLAUDE_MODEL }}
+          OUTPUT_DIR: "output"
+          AUDIT_ONLY: ${{ github.event.inputs.audit_only || 'false' }}
+          ADMIN_ONLY: ${{ github.event.inputs.admin_only || 'false' }}
+        run: |
+          python generate.py
+
+      - name: Upload fortune JSON
+        if: ${{ github.event.inputs.audit_only != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: fortunes
+          path: output/fortunes_*.json
+          retention-days: 7
+
+  send:
+    needs: generate
+    if: ${{ github.event.inputs.audit_only != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download fortune JSON
+        uses: actions/download-artifact@v4
+        with:
+          name: fortunes
+          path: output
+
+      - name: Send fortunes to Slack
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
+          OUTPUT_DIR: "output"
+          ADMIN_ONLY: ${{ github.event.inputs.admin_only || 'false' }}
+        run: |
+          python send.py
