@@ -237,8 +237,8 @@ def calculate_day_pillar(date_str: str) -> Tuple[str, str]:
     # Calculate days difference
     days_diff = (target_date - reference_date).days
 
-    # 갑자 is at position 0 in the 60-cycle
-    cycle_index = days_diff % 60
+    # January 1, 1900 is 甲戌(갑술) - index 10 in 60-cycle
+    cycle_index = (days_diff + 10) % 60
 
     stem_index = cycle_index % 10
     branch_index = cycle_index % 12
