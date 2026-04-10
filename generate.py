@@ -227,7 +227,6 @@ def claude_generate_fortune(api_key: str, model: str, prompt: str) -> str:
 ⚠️ 구조 규칙
 - 개별 소제목은 쓰지 않는다.
 - 아래에 지정된 고정 섹션 제목만 사용한다.
-- 모든 제목은 Slack 굵은 글씨(*)로 표기한다.
 - 각 고정 섹션 제목 앞에 의미에 맞는 이모지 1개를 사용한다.
 - 공포·질병·재난·죽음·폭력·투자 종목은 언급하지 않는다.
 
@@ -273,7 +272,7 @@ def claude_generate_fortune(api_key: str, model: str, prompt: str) -> str:
 
     message = client.messages.create(
         model=model,
-        max_tokens=1200,
+        max_tokens=1300,
         temperature=1.0,
         system=[
             {
